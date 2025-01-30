@@ -14,7 +14,8 @@
         android:supportsRtl="true"
         android:taskAffinity=""
         android:theme="@style/AppTheme"
-        tools:ignore="AllowBackup">
+        tools:ignore="AllowBackup"
+        android:name="com.chaquo.python.android.PyApplication">
 
         <activity
             android:name=".MainActivity"

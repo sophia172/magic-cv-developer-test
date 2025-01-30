@@ -9,9 +9,8 @@ class ExerciseRepCounterImpl : ExerciseRepCounter() {
 
     override fun setResults(resultBundle: PoseLandmarkerHelper.ResultBundle) {
         val python = Python.getInstance()
-        val pyObject = python.getModule("script")  // Name of your Python script without .py
-        val result = pyObject.callAttr("greet", "World")  // Call the Python function
-//        println(result.toString())
+        val pyObject = python.getModule("pycode")  // Name of your Python script without .py
+        val result = pyObject.callAttr("confidence", resultBundle)  // Call the Python function
         incrementRepCount()
         val currentReps = 0.1f
         sendProgressUpdate(currentReps)
