@@ -1,6 +1,8 @@
 
-from collections import deque
+from collections import deque, Counter
 from scipy.spatial.distance import cosine
+import math
+import numpy as np
 
 def confidence(resultBundle):
     print(resultBundle)
@@ -30,15 +32,30 @@ def hip_knee_angle(keypoints):
             )
 
 class lunge_worker():
-    def __init__(self, frequency=24):
-        self.history = deque(maxlen=frequency)
-
-        self.leg = 0
-        self.example = np.ones(frequency)
+    def __init__(self, frequency=24, enable_dtw=True, joint_num=4):
+        self.joint_num = joint_num
+        self.enable_dtw = enable_dtw
         self.frequency = frequency
+        self.history = deque(maxlen=frequency)
+        self.leg = deque(maxlen=frequency)
+        x = np.linspace(0, np.pi*2, self.frequency)
+        self.example = np.repeat(np.sin(x), joint_num).reshape((-1, joint_num))
+        if enable_dtw:
+            self.dtw_workers = [dtw_calculator(i,
+                                               frequency=frequency,
+                                               example=self.example[:,i].flatten(),
+                                               )
+                                for i in range(joint_num)
+                                ]
+
+
 
     def update(self, angles):
         self.history.append(angles)
+        self.working_leg()
+        if self.enable_dtw:
+            for i in range(self.joint_num):
+                self.dtw_workers[i].update(angles[i])
 
     def working_leg(self):
         """
@@ -46,38 +63,46 @@ class lunge_worker():
         left if 0 and right is 1
         :return:
         """
-        self.leg = np.unravel_index(np.argmax(self.history, axis=None), self.history.shape)[1] // 2
+        self.leg.append(np.unravel_index(np.argmax(self.history, axis=None),
+                                         np.array(self.history).shape)[1] // 2)
+
         return
 
     def cos_similarity(self):
         """
+        This function ignores joint number variable,
+        Fix the joint sequence and joint number here
         :return: (0,100) for similarity score
         """
-        idx = [self.leg * 2, self.leg * 2 + 1, 2 - self.leg * 2,  3 - self.leg * 2] # lunge leg first
+        leg = Counter(self.leg).most_common()[0][0]
+        idx = [leg * 2, leg * 2 + 1, 2 - leg * 2,  3 - leg * 2] # lunge leg first
         score = cosine(
                         np.array(self.history)[:, idx].T.flatten(),
-                        self.example
+                        self.example.T.flatten()
                     )
         return int(round((1-score) * 100,0))
+
+    def dtw_similarity(self):
+        return np.mean([worker.dtw_similarity() for worker in self.dtw_workers])
 
 
 
 class dtw_calculator():
-    def __init__(self, name, frequency=20):
+    def __init__(self, name, frequency=20, example=None):
         """
         Cache DTW cost matrix and update with new frame
         :param name:
         """
         self.name = name
         self.frequency = frequency
+        self.example=example
         self.dtw_cost_matrix = deque(maxlen=self.frequency)
         for i in range(self.frequency):
             self.dtw_cost_matrix.append([255] * self.frequency)
-        self.min_idx_val = deque(maxlen=self.frequency * self.frequency)
-
+        self.min_idx = deque(maxlen=self.frequency * self.frequency)
         return
 
-    def dtw_update(self, angle):
+    def update(self, angle):
         distance = np.abs(self.example - angle)
 
         self.dtw_cost_matrix.appendleft(distance)
@@ -86,6 +111,7 @@ class dtw_calculator():
         min_val = self.dtw_cost_matrix[min_idx[0]][min_idx[1]]
         self.min_idx.appendleft(min_idx)
         self.dtw_cost_matrix[0][0] += min_val
+
 
         for i in range(1, self.frequency):
             lst = [[1,-1], [0,-1], [1,0]]
@@ -105,6 +131,5 @@ class dtw_calculator():
             path_num += 1
             new_i, new_j = self.min_idx[i * self.frequency + j]
             i, j = i + new_i, j + new_j
-
         return distance/path_num
 
