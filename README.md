@@ -35,7 +35,7 @@ This repository contains an **Android Kotlin** application that leverages the **
 ## 🛠️ Setup & Installation
 1. **Clone the repository**
    ```bash
-   git clone [https://github.com/your-username/your-repo.git](https://github.com/sophia172/magic-cv-developer-test.git)
+   git clone https://github.com/sophia172/magic-cv-developer-test.git
    cd magic-cv-developer-test
    ```
 2. **Open in Android Studio**
