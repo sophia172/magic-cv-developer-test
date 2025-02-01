@@ -3,10 +3,28 @@ from collections import deque, Counter
 from scipy.spatial.distance import cosine
 import math
 import numpy as np
+import json
 
-def confidence(resultBundle):
-    print(resultBundle)
-    return 0.1
+class magic_driver():
+    def __init__(self, freq):
+        self.body = deque(maxlen=freq)
+        self.human = False
+        return
+
+    def update(self, jsonStr):
+        data = json.loads(jsonStr)
+        self.body.append(False if len(data['results'][0]['landmarks']) == 0 else True)
+        self.human_exist()
+
+        return self.human
+
+    def human_exist(self):
+        print(self.body)
+        if all(self.body) and not self.human:
+            self.human = True
+        elif not all(self.body) and self.human:
+            self.human = False
+        return
 
 def coordinates2angle(vector_a, vector_b):
 

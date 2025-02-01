@@ -2,13 +2,21 @@
 
 package fit.magic.cv.repcounter
 
+import com.chaquo.python.Python
 import fit.magic.cv.PoseLandmarkerHelper
+
 
 abstract class ExerciseRepCounter {
 
     private var listener: ExerciseEventListener? = null
 
     private var repCount = 0
+
+    val python = Python.getInstance()
+    val pyModule = python.getModule("pycode")  // Name of your Python script without .py
+    val magicDriver = pyModule.callAttr("magic_driver", 24)  // Call the Python function
+
+
 
     abstract fun setResults(resultBundle: PoseLandmarkerHelper.ResultBundle)
 
