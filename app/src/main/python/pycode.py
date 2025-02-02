@@ -6,49 +6,37 @@ import numpy as np
 import json
 import os
 
-class magic_driver():
-    def __init__(self, freq):
+class MagicDriver():
+    def __init__(self, freq:int):
         self.body = deque(maxlen=freq)
         self.human = False
         self.lunge_worker = lunge_worker(frequency=24, enable_dtw=False, joint_num=4)
         return
 
-    def update(self, jsonStr):
+    def update(self, jsonStr:str):
         data = json.loads(jsonStr)
-        self.body.append(False if len(data['results'][0]['landmarks']) == 0 else True)
-        self.human_exist()
+        landmarks = data['results'][0].get('landmarks', [])
+        self.body.append(bool(landmarks))
+        self._update_human_status()
         if self.human:
-            joints = []
-            for joint in [11, 23, 25, 27, 12, 24, 26, 28]:
-                joints.append(
-                                [
-                                data['results'][0]['landmarks'][0][joint]['x'],
-                                data['results'][0]['landmarks'][0][joint]['y'],
-                                data['results'][0]['landmarks'][0][joint]['z'],
-                                ]
-                              )
-            angles = hip_knee_angle(np.array(joints))
+            joints = np.array([
+                [landmarks[0][joint]['x'], landmarks[0][joint]['y'], landmarks[0][joint]['z']]
+                for joint in [11, 23, 25, 27, 12, 24, 26, 28]
+            ])
+            angles = hip_knee_angle(joints)
             self.lunge_worker.update(angles)
-            print(self.lunge_worker.progress)
-            return self.lunge_worker.progress
 
+            return self.lunge_worker.live_progress
         return 0
 
-    def human_exist(self):
-        if all(self.body) and not self.human:
-            self.human = True
-        elif not all(self.body) and self.human:
-            self.human = False
-        return
+    def _update_human_status(self):
+        self.human = all(self.body) if not self.human else not all(self.body)
 
-def coordinates2angle(A,B):
-    _R = rotation_matrix(A, B)
-    tx, ty, tz = Decompose_R_XYZ(_R)
-    joint_rs = [tx.astype(int),
-                ty.astype(int),
-                tz.astype(int),
-                np.linalg.norm([tx, ty, tz]).astype(int)]
-    return joint_rs
+def coordinates2angle(A, B):
+    R = rotation_matrix(A, B)
+    angles = Decompose_R_XYZ(R)
+    return [int(angle) for angle in angles] + [int(np.linalg.norm(angles))]
+
 
 def Decompose_R_XYZ(R):
     """
@@ -83,153 +71,104 @@ def rotation_matrix(A, B):
 
     return R
 
+
 def hip_knee_angle(kpts):
     """
-    :param kpts: np.array shape of (8,3), left shoulder, left hip, left knee, left ankel, right shoulder, right hip, right knee, right ankel
-    :return: left hip angle, left knee angle, right hip angle, right knee angle, unit is (0,180) in integer
+    Compute angles for hips and knees based on keypoints.
+    :param kpts: np.array shape (8,3), ordered as follows:
+        left shoulder, left hip, left knee, left ankle,
+        right shoulder, right hip, right knee, right ankle
+    :return: List of four joint angles (0-180 degrees, integers)
     """
-    left_body = kpts[1] - kpts[0]
-    left_thigh = kpts[2] - kpts[1]
-    left_shin = kpts[3] - kpts[2]
-    right_body = kpts[5] - kpts[4]
-    right_thigh = kpts[6] - kpts[5]
-    right_shin = kpts[7] - kpts[6]
-    return [coordinates2angle(left_body, left_thigh),
-            coordinates2angle(left_thigh, left_shin),
-            coordinates2angle(right_body, right_thigh),
-            coordinates2angle(right_thigh, right_shin)
-            ]
+    segments = [
+        (kpts[1] - kpts[0], kpts[2] - kpts[1]),
+        (kpts[2] - kpts[1], kpts[3] - kpts[2]),
+        (kpts[5] - kpts[4], kpts[6] - kpts[5]),
+        (kpts[6] - kpts[5], kpts[7] - kpts[6])
+    ]
+
+    return [coordinates2angle(*seg) for seg in segments]
+
 
 class lunge_worker():
     def __init__(self, frequency=24, enable_dtw=False, joint_num=4):
         self.joint_num = joint_num
         self.enable_dtw = enable_dtw
         self.frequency = frequency
-        self.history = deque(maxlen=frequency*5)
+        self.history = deque(maxlen=frequency)
         self.leg = deque(maxlen=frequency//2)
-        x = np.linspace(0, np.pi*2, self.frequency)
-        self.example = np.repeat(np.sin(x), joint_num).reshape((-1, joint_num))
-        if enable_dtw:
-            self.dtw_workers = [dtw_calculator(i,
-                                               frequency=frequency,
-                                               example=self.example[:,i].flatten(),
-                                               )
-                                for i in range(joint_num)
-                                ]
-        self.progress = 0
-        self.count = 0
-        self.live_progress = 0
-
-
+        self.progress = self.count = self.live_progress = 0
+        self.progress_bar = False
+        self.min = np.array([360,360])
 
     def update(self, angles):
         """
+        Updates the joint angle history and progress tracking.
 
-        :param angles: list shape of (joint num, xyz)
-        :return:
+        :param angles: list shape of (joint_num, xyz)
+        :return: The last angle values.
         """
+        angles = self.max_angle(np.array(angles))
         self.history.append(angles)
-        self.leg.append(np.unravel_index(np.argmax(self.history, axis=None),
-                                                 np.array(self.history).shape)[1] // 2)
-        self.update_progress(angles)
-        if self.enable_dtw:
-            for i in range(self.joint_num):
-                self.dtw_workers[i].update(angles[i])
+        self.update_progress()
+        return angles[:, -1]
 
     def working_leg(self):
         """
         Use the maximum angle to decide the working leg.
         left if 0 and right is 1
+        This is a stable working leg, not streaming one
         :return:
         """
         return Counter(self.leg).most_common()[0][0]
 
     def max_angle(self, angles):
-        angles = np.array(angles)
-        leg = np.argmax(np.array(angles)[:,-1]) // 2
-        return angles[leg:leg+2]
+        """
+        Selects the side with the maximum joint angle.
+        :param angles: NumPy array of joint angles.
+        :return: Reordered angles for processing.
+        """
+        leg = np.argmax(angles[:, -1]) // 2  # Determine dominant leg
+        return angles[[leg * 2, leg * 2 + 1, 2 - leg * 2, 3 - leg * 2]]
 
+    def _hip_knee(self):
+        """
+        Computes the mean hip and knee angles over a short window.
+        :return: (hip angle, knee angle)
+        """
+        window_size = self.frequency // 4
+        hip, knee, _, _ = np.mean(np.array(self.history)[-window_size:], axis=0)
+        return hip[-1], knee[-1]
 
-    def _progress(self, angles):
-        hip, knee = self.max_angle(angles)
-        hip_progress = np.clip(hip[-1] / 95, 0, 1)
-        knee_progress = np.clip(knee[-1] / 95, 0, 1)
+    def _progress(self, hip, knee):
+        """
+        Computes the lunge progress based on hip and knee angles.
+
+        :param hip: Current hip angle.
+        :param knee: Current knee angle.
+        :return: Normalized progress value (0 to 1).
+        """
+        self.min = np.minimum(self.min, [hip, knee])
+        hip_progress = np.clip((hip - self.min[0]) / 55, 0, 1)
+        knee_progress = np.clip((knee - self.min[1]) / 90, 0, 1)
         return round(np.mean([hip_progress, knee_progress]), 2)
 
-    def update_progress(self, angles):
-        self.live_progress = self._progress(angles)
-
-        if self.progress == 1:
+    def update_progress(self):
+        """
+        Updates the progress state based on the hip and knee angles.
+        """
+        if abs(self.progress - 1) < 0.009:
             self.count += 1
             self.progress = 0
-        elif 0 < self.live_progress - self.progress <= 0.4:
+            self.min.fill(360)
+            self.progress_bar = False
+        hip, knee = self._hip_knee()
+        self.live_progress = self._progress(hip, knee)
+        if abs(self.progress - 0) < 0.01 and self.live_progress >= 0.35:
+            self.progress_bar = True
+        if self.progress_bar and self.live_progress > self.progress:
             self.progress = self.live_progress
 
 
-
-
-    def cos_similarity(self):
-        """
-        This function ignores joint number variable,
-        Fix the joint sequence and joint number here
-        :return: (0,100) for similarity score
-        """
-        leg = self.working_leg()
-        idx = [leg * 2, leg * 2 + 1, 2 - leg * 2,  3 - leg * 2] # lunge leg first
-        score = cosine(
-                        np.array(self.history)[:, idx].T.flatten(),
-                        self.example.T.flatten()
-                    )
-        return int(round((1-score) * 100,0))
-
-    def dtw_similarity(self):
-        return np.mean([worker.dtw_similarity() for worker in self.dtw_workers])
-
-
-
-class dtw_calculator():
-    def __init__(self, name, frequency=20, example=None):
-        """
-        Cache DTW cost matrix and update with new frame
-        :param name:
-        """
-        self.name = name
-        self.frequency = frequency
-        self.example=example
-        self.dtw_cost_matrix = deque(maxlen=self.frequency)
-        for i in range(self.frequency):
-            self.dtw_cost_matrix.append([255] * self.frequency)
-        self.min_idx = deque(maxlen=self.frequency * self.frequency)
-        return
-
-    def update(self, angle):
-        distance = np.abs(self.example - angle)
-
-        self.dtw_cost_matrix.appendleft(distance)
-        # find min among neighbours
-        min_idx = [1,0]
-        min_val = self.dtw_cost_matrix[min_idx[0]][min_idx[1]]
-        self.min_idx.appendleft(min_idx)
-        self.dtw_cost_matrix[0][0] += min_val
-
-
-        for i in range(1, self.frequency):
-            lst = [[1,-1], [0,-1], [1,0]]
-            neighbours = [self.dtw_cost_matrix[row][i+col] for row, col in lst]
-            min_idx = lst[neighbours.index(min(neighbours))]
-            min_val = self.dtw_cost_matrix[min_idx[0]][min_idx[1]]
-            self.min_idx.appendleft(min_idx)
-            self.dtw_cost_matrix[0][i] += min_val
-
-
-    def dtw_similarity(self):
-        i, j = 0, self.frequency-1
-        distance = 0
-        path_num = 0
-        while i < self.frequency and j >= 0:
-            distance += self.dtw_cost_matrix[i][j]
-            path_num += 1
-            new_i, new_j = self.min_idx[i * self.frequency + j]
-            i, j = i + new_i, j + new_j
-        return distance/path_num
-
+if __name__ == '__main__':
+    driver = MagicDriver(24)

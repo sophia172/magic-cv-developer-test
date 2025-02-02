@@ -14,7 +14,7 @@ abstract class ExerciseRepCounter {
 
     val python = Python.getInstance()
     val pyModule = python.getModule("pycode")  // Name of your Python script without .py
-    val magicDriver = pyModule.callAttr("magic_driver", 24)  // Call the Python function
+    val magicDriver = pyModule.callAttr("MagicDriver", 24)  // Call the Python function
 
 
 
