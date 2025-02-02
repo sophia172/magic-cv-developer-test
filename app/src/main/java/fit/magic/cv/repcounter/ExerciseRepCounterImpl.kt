@@ -16,9 +16,14 @@ class ExerciseRepCounterImpl : ExerciseRepCounter() {
 
         val jsonStr = Gson().toJson(resultBundle)
         val result = magicDriver.callAttr("update", jsonStr)
-        incrementRepCount()
-        val currentReps = 0.1f
-        sendProgressUpdate(currentReps)
-        sendFeedbackMessage(result.toString())
+        val lungeWorker = magicDriver.getValue("lunge_worker")
+        val count = lungeWorker.getValue("count").toInt()
+        val progress = lungeWorker.getValue("progress").toFloat()
+        val liveProgress = lungeWorker.getValue("live_progress").toString()
+        if ((kotlin.math.abs(progress - 1.0f) < 0.0001f)) {
+            incrementRepCount() // Code to execute when progress is 1
+        }
+        sendProgressUpdate(progress)
+        sendFeedbackMessage(liveProgress)
     }
 }
