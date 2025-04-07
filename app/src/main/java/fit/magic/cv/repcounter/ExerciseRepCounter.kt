@@ -12,10 +12,7 @@ abstract class ExerciseRepCounter {
 
     private var repCount = 0
 
-    val python = Python.getInstance()
-    val pyModule = python.getModule("pycode")  // Name of your Python script without .py
-    val magicDriver = pyModule.callAttr("MagicDriver", 24)  // Call the Python function
-
+    val magicDriver = MagicDriver(24)
 
 
     abstract fun setResults(resultBundle: PoseLandmarkerHelper.ResultBundle)
